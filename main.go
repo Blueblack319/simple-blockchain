@@ -4,6 +4,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"io"
 	"log"
 	"net/http"
@@ -123,6 +124,7 @@ func handleGetBlockchain(w http.ResponseWriter, r *http.Request) {
 }
 
 func handleWriteBlock(w http.ResponseWriter, r *http.Request) {
+	fmt.Println("here")
 	var m Message
 
 	decoder := json.NewDecoder(r.Body)
