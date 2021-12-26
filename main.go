@@ -1,9 +1,15 @@
 package main
 
 import (
+	"bufio"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
+	"fmt"
+	"io"
 	"log"
+	"net"
+	"os"
 	"strconv"
 	"time"
 
@@ -22,6 +28,9 @@ type Block struct {
 
 var Blockchain []Block
 
+// bcServer handles incoming concurrent Blocks
+var bcServer chan []Block
+
 // Main
 func main() {
 	err := godotenv.Load()
@@ -29,12 +38,73 @@ func main() {
 		log.Fatal(err)
 	}
 
+	bcServer = make(chan []Block)
+
+	genesisBlock := Block{0, time.Now().String(), 0, "", ""}
+	spew.Dump(genesisBlock)
+	Blockchain = append(Blockchain, genesisBlock)
+
+	// start TCP and serve TCP server
+	server, err := net.Listen("tcp", ":"+os.Getenv("ADDR"))
+	if err != nil {
+		log.Fatal(err)
+	}
+	defer server.Close()
+
+	for {
+		conn, err := server.Accept()
+		if err != nil {
+			log.Fatal(err)
+		}
+		go handleConnection(conn)
+	}
+}
+
+func handleConnection(conn net.Conn) {
+	defer conn.Close()
+
+	// send message to each connections
+	io.WriteString(conn, "Enter a new BPM\n")
+	// get message from each connections
+	scanner := bufio.NewScanner(conn)
+
+	// take in BPM from stdin and add it to blockchain after conducting necessary validation
 	go func() {
-		genesisBlock := Block{0, time.Now().String(), 0, "", ""}
-		spew.Dump(genesisBlock)
-		Blockchain = append(Blockchain, genesisBlock)
+		for scanner.Scan() {
+			bpm, err := strconv.Atoi(scanner.Text())
+			if err != nil {
+				log.Printf("%v not a number: %v", scanner.Text(), err)
+				continue
+			}
+			newBlock, err := generateBlock(Blockchain[len(Blockchain)-1], bpm)
+			if err != nil {
+				log.Println(err)
+				continue
+			}
+			if isBlockValid(newBlock, Blockchain[len(Blockchain)-1]) {
+				newBlockchain := append(Blockchain, newBlock)
+				replaceChain(newBlockchain)
+			}
+
+			bcServer <- Blockchain
+			io.WriteString(conn, "\nEnter a new BPM")
+		}
 	}()
-	// log.Fatal(run())
+
+	// simulate receiving broadcast
+	go func() {
+		time.Sleep(30 * time.Second)
+		output, err := json.Marshal(Blockchain)
+		if err != nil {
+			log.Fatal(err)
+		}
+		io.WriteString(conn, string(output))
+	}()
+	// bcServer는 channel인데 반복하면 message의 개수? => BPM을 작성한 만큼 Blockchain을 보여준다?! => ok!
+	for _ = range bcServer {
+		spew.Dump(Blockchain)
+		fmt.Println("================================================")
+	}
 }
 
 // calculate hash by using index, timestamp, bpm, previous hash
