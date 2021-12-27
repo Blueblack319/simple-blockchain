@@ -11,6 +11,7 @@ import (
 	"net"
 	"os"
 	"strconv"
+	"sync"
 	"time"
 
 	"github.com/davecgh/go-spew/spew"
@@ -18,18 +19,25 @@ import (
 )
 
 // Variables
+const difficulty = 1
+
 type Block struct {
-	Index     int
-	Timestamp string
-	BPM       int
-	Hash      string
-	PrevHash  string
+	Index      int
+	Timestamp  string
+	BPM        int
+	Hash       string
+	PrevHash   string
+	Difficulty int
+	Nonce      string
 }
 
 var Blockchain []Block
 
-// bcServer handles incoming concurrent Blocks
-var bcServer chan []Block
+type Message struct {
+	BPM int
+}
+
+var mutex = &sync.Mutex{}
 
 // Main
 func main() {
