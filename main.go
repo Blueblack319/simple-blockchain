@@ -19,9 +19,7 @@ import (
 	"github.com/joho/godotenv"
 )
 
-// Variables
-const difficulty = 1
-
+// Global Variables
 type Block struct {
 	Index      int
 	Timestamp  string
@@ -29,16 +27,23 @@ type Block struct {
 	Hash       string
 	PrevHash   string
 	Difficulty int
-	Nonce      string
+	Validator  string
 }
 
+// Blockchain is a series of validated Blocks
 var Blockchain []Block
+var tempBlocks []Block
 
-type Message struct {
-	BPM int
-}
+// candidateBlocks handles incoming blocks for validation
+var candidatedBlocks = make(chan Block)
+
+// announcements broadcasts winning validator to all nodes
+var announcements = make(chan string)
 
 var mutex = &sync.Mutex{}
+
+// validators keeps track of open validators and balances
+var validators = make(map[string]int)
 
 // Main
 func main() {
