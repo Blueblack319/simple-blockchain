@@ -1,11 +1,14 @@
 package main
 
 import (
+	"bufio"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"io"
 	"log"
+	"net"
 	"net/http"
 	"os"
 	"strconv"
@@ -91,6 +94,81 @@ func isBlockValid(newBlock, oldBlock Block) bool {
 		return false
 	}
 	return true
+}
+
+func handleConn(conn net.Conn) {
+	defer conn.Close()
+
+	go func() {
+		for {
+			msg := <-announcements
+			io.WriteString(conn, msg)
+		}
+	}()
+
+	// validator address
+	var address string
+
+	// allow user to allocate number of tokens to stake
+	// the greater the number of tokens, the greater chance to forging a new block
+	io.WriteString(conn, "Enter token to stake: ")
+	scanBalance := bufio.NewScanner(conn)
+	for scanBalance.Scan() {
+		balance, err := strconv.Atoi(scanBalance.Text())
+		if err != nil {
+			log.Printf("%v not a number: %v", scanBalance.Text(), err)
+			return
+		}
+		t := time.Now()
+		address = calculateHash(t.String())
+		validators[address] = balance
+		fmt.Println(validators)
+		break
+	}
+
+	io.WriteString(conn, "Enter a new BPM: ")
+	scanBPM := bufio.NewScanner(conn)
+	go func() {
+		for {
+			// take in BPM from stdin and add it to blockchain after conducting necessary validation
+			for scanBPM.Scan() {
+				bpm, err := strconv.Atoi(scanBPM.Text())
+				// if malicious party tries to mutate the chain with a bad input, delete them as a validator and they lose their staked tokens
+				if err != nil {
+					log.Printf("%v is not a number: %v", scanBPM.Text(), err)
+					delete(validators, address)
+					conn.Close()
+				}
+
+				mutex.Lock()
+				oldLastBlock := Blockchain[len(Blockchain)-1]
+				mutex.Unlock()
+
+				// create newBlock for consideration to be forged
+				newBlock, err := generateBlock(oldLastBlock, bpm, address)
+				if err != nil {
+					log.Println(err)
+					continue
+				}
+				if isBlockValid(newBlock, oldLastBlock) {
+					candidatedBlocks <- newBlock
+				}
+				io.WriteString(conn, "\nEnter a new BPM: ")
+			}
+		}
+	}()
+
+	// simulate receiving broadcast
+	for {
+		time.Sleep(time.Minute)
+		mutex.Lock()
+		output, err := json.Marshal(Blockchain)
+		mutex.Unlock()
+		if err != nil {
+			log.Fatal(err)
+		}
+		io.WriteString(conn, string(output))
+	}
 }
 
 //====================================================================================
