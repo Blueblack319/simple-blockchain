@@ -4,7 +4,6 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
-	"fmt"
 	"io"
 	"log"
 	"net/http"
@@ -16,18 +15,16 @@ import (
 
 	"github.com/davecgh/go-spew/spew"
 	"github.com/gorilla/mux"
-	"github.com/joho/godotenv"
 )
 
 // Global Variables
 type Block struct {
-	Index      int
-	Timestamp  string
-	BPM        int
-	Hash       string
-	PrevHash   string
-	Difficulty int
-	Validator  string
+	Index     int
+	Timestamp string
+	BPM       int
+	Hash      string
+	PrevHash  string
+	Validator string
 }
 
 // Blockchain is a series of validated Blocks
@@ -47,24 +44,56 @@ var validators = make(map[string]int)
 
 // Main
 func main() {
-	err := godotenv.Load()
-	if err != nil {
-		log.Fatal(err)
-	}
 
-	go func() {
-		t := time.Now()
-		var genesisBlock Block
-		genesisBlock = Block{0, t.String(), 0, calculateHash(genesisBlock), "", difficulty, ""}
-		spew.Dump(genesisBlock)
-
-		mutex.Lock()
-		Blockchain = append(Blockchain, genesisBlock)
-		mutex.Unlock()
-	}()
-
-	log.Fatal(run())
 }
+
+// SHA256 hasing
+// calculateHash is a simple SHA256 hashing function
+func calculateHash(s string) string {
+	h := sha256.New()
+	h.Write([]byte(s))
+	hashed := h.Sum(nil)
+	return hex.EncodeToString(hashed)
+}
+
+//calculateBlockHash returns the hash of all block information
+func calculateBlockHash(block Block) string {
+	record := strconv.Itoa(block.Index) + strconv.Itoa(block.BPM) + block.PrevHash + block.Timestamp
+	return calculateHash(record)
+}
+
+// generateBlock creates a new block using previous block's hash
+func generateBlock(oldBlock Block, BPM int, address string) (Block, error) {
+	var newBlock Block
+
+	t := time.Now()
+
+	newBlock.Index = oldBlock.Index + 1
+	newBlock.Timestamp = t.String()
+	newBlock.BPM = BPM
+	newBlock.PrevHash = oldBlock.Hash
+	newBlock.Hash = calculateBlockHash(newBlock)
+	newBlock.Validator = address
+
+	return newBlock, nil
+}
+
+// isBlockValid makes sure block is valid by checking index
+// and comparing the hash of the previous block
+func isBlockValid(newBlock, oldBlock Block) bool {
+	if newBlock.Index-1 != oldBlock.Index {
+		return false
+	}
+	if newBlock.PrevHash != oldBlock.Hash {
+		return false
+	}
+	if calculateBlockHash(newBlock) != newBlock.Hash {
+		return false
+	}
+	return true
+}
+
+//====================================================================================
 
 // http server
 func run() error {
@@ -135,59 +164,9 @@ func respondWithJson(w http.ResponseWriter, r *http.Request, code int, payload i
 	w.Write(response)
 }
 
-// calculate hash by using index, timestamp, bpm, previous hash
-func calculateHash(block Block) string {
-	record := strconv.Itoa(block.Index) + block.Timestamp + strconv.Itoa(block.BPM) + block.PrevHash + block.Nonce
-	h := sha256.New()
-	h.Write([]byte(record))
-	hashed := h.Sum(nil)
-	return hex.EncodeToString(hashed)
-}
-
-// validate block by using Index, PrevHash and double check calculateHash function
-func isBlockValid(newBlock, oldBlock Block) bool {
-	if newBlock.Index-1 != oldBlock.Index {
-		return false
-	}
-	if newBlock.PrevHash != oldBlock.Hash {
-		return false
-	}
-	if calculateHash(newBlock) != newBlock.Hash {
-		return false
-	}
-	return true
-}
-
 func isHashValid(hash string, difficulty int) bool {
 	prefix := strings.Repeat("0", difficulty)
 	return strings.HasPrefix(hash, prefix)
-}
-
-// generate block
-func generateBlock(oldBlock Block, BPM int) Block {
-	var newBlock Block
-
-	newBlock.Index = oldBlock.Index + 1
-	newBlock.Timestamp = time.Now().String()
-	newBlock.BPM = BPM
-	newBlock.PrevHash = oldBlock.Hash
-	newBlock.Difficulty = difficulty
-
-	for i := 0; ; i++ {
-		hex := fmt.Sprintf("%x", i)
-		newBlock.Nonce = hex
-		if !isHashValid(calculateHash(newBlock), newBlock.Difficulty) {
-			fmt.Println(calculateHash(newBlock), "do more work!")
-			time.Sleep(time.Second)
-			continue
-		} else {
-			fmt.Println(calculateHash(newBlock), "work done!")
-			newBlock.Hash = calculateHash(newBlock)
-			break
-		}
-	}
-
-	return newBlock
 }
 
 // replace chain if that is longer than blockchain
