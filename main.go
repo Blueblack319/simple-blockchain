@@ -8,16 +8,15 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"math/rand"
 	"net"
-	"net/http"
 	"os"
 	"strconv"
-	"strings"
 	"sync"
 	"time"
 
 	"github.com/davecgh/go-spew/spew"
-	"github.com/gorilla/mux"
+	"github.com/joho/godotenv"
 )
 
 // Global Variables
@@ -47,7 +46,48 @@ var validators = make(map[string]int)
 
 // Main
 func main() {
+	err := godotenv.Load()
+	if err != nil {
+		log.Fatal(err)
+	}
 
+	// create genesis block
+	t := time.Now()
+	genesisBlock := Block{}
+	genesisBlock = Block{Index: 0, Timestamp: t.String(), BPM: 0, Hash: calculateBlockHash(genesisBlock), PrevHash: "", Validator: ""}
+	spew.Dump(genesisBlock)
+	Blockchain = append(Blockchain, genesisBlock)
+
+	// start TCP and serve TCP server
+	server, err := net.Listen("tcp", ":"+os.Getenv("ADDR"))
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	defer server.Close()
+
+	fmt.Println("Listening on : 165.22.240.8:9000")
+	go func() {
+		for candidate := range candidatedBlocks {
+			mutex.Lock()
+			tempBlocks = append(tempBlocks, candidate)
+			mutex.Unlock()
+		}
+	}()
+
+	go func() {
+		for {
+			pickWinner()
+		}
+	}()
+
+	for {
+		conn, err := server.Accept()
+		if err != nil {
+			log.Fatal()
+		}
+		go handleConn(conn)
+	}
 }
 
 // SHA256 hasing
@@ -171,85 +211,58 @@ func handleConn(conn net.Conn) {
 	}
 }
 
-//====================================================================================
-
-// http server
-func run() error {
-	mux := makeMuxServer()
-	httpAddr := os.Getenv("ADDR")
-	log.Println("Listening on : ", httpAddr)
-	s := &http.Server{
-		Addr:           ":" + httpAddr,
-		Handler:        mux,
-		ReadTimeout:    10 * time.Second,
-		WriteTimeout:   10 * time.Second,
-		MaxHeaderBytes: 1 << 20,
-	}
-	if err := s.ListenAndServe(); err != nil {
-		return err
-	}
-	return nil
-}
-
-func makeMuxServer() http.Handler {
-	muxRouter := mux.NewRouter()
-	muxRouter.HandleFunc("/", handleGetBlockchain).Methods("GET")
-	muxRouter.HandleFunc("/", handleWriteBlock).Methods("POST")
-	return muxRouter
-}
-
-func handleGetBlockchain(w http.ResponseWriter, r *http.Request) {
-	bytes, err := json.MarshalIndent(Blockchain, "", " ")
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
-	io.WriteString(w, string(bytes))
-}
-
-func handleWriteBlock(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Content-Type", "application/json")
-	var m Message
-
-	decoder := json.NewDecoder(r.Body)
-	if err := decoder.Decode(&m); err != nil {
-		respondWithJson(w, r, http.StatusBadRequest, r.Body)
-		return
-	}
-	defer r.Body.Close()
-
+// pickWinner creates a lottery pool of validators and chooses the validator who gets to forge a block to the blockchain
+// by random selecting from the pool, weighted by amount of tokens staked
+func pickWinner() {
+	time.Sleep(30 * time.Second)
 	mutex.Lock()
-	newBlock := generateBlock(Blockchain[len(Blockchain)-1], m.BPM)
+	temp := tempBlocks
 	mutex.Unlock()
 
-	if isBlockValid(newBlock, Blockchain[len(Blockchain)-1]) {
-		Blockchain = append(Blockchain, newBlock)
-		spew.Dump(Blockchain)
+	lotteryPool := []string{}
+	if len(temp) > 0 {
+		// slightly modified traditional proof of stake algorithm
+		// from all validators who submitted a block, weight them by the number of staked tokens
+		// in traditional proof of stake, validators can participate without submitting a block to be forged
+	OUTER:
+		for _, block := range tempBlocks {
+			// if already in lottery pool, skip
+			for _, node := range lotteryPool {
+				if block.Validator == node {
+					continue OUTER
+				}
+			}
+			// lock list of validators to prevent data race
+			mutex.Lock()
+			setValidators := validators
+			mutex.Unlock()
+
+			k, ok := setValidators[block.Validator]
+			if ok {
+				for i := 0; i < k; i++ {
+					lotteryPool = append(lotteryPool, block.Validator)
+				}
+			}
+		}
+		// randomly pick winner from lottery pool
+		seed := rand.NewSource(time.Now().Unix())
+		r := rand.New(seed)
+		lotteryWinner := lotteryPool[r.Intn(len(lotteryPool))]
+
+		// add block of winner to blockchain and let all the other nodes know
+		for _, block := range temp {
+			if block.Validator == lotteryWinner {
+				mutex.Lock()
+				Blockchain = append(Blockchain, block)
+				mutex.Unlock()
+				for _ = range validators {
+					announcements <- "\nwinning validator: " + lotteryWinner + "\n"
+				}
+				break
+			}
+		}
 	}
-
-	respondWithJson(w, r, http.StatusCreated, newBlock)
-}
-
-func respondWithJson(w http.ResponseWriter, r *http.Request, code int, payload interface{}) {
-	w.Header().Set("Content-Type", "application/json")
-	response, err := json.MarshalIndent(payload, "", " ")
-	if err != nil {
-		w.WriteHeader(http.StatusInternalServerError)
-		w.Write([]byte("HTTP 500: Internal Server Error"))
-		return
-	}
-	w.WriteHeader(code)
-	w.Write(response)
-}
-
-func isHashValid(hash string, difficulty int) bool {
-	prefix := strings.Repeat("0", difficulty)
-	return strings.HasPrefix(hash, prefix)
-}
-
-// replace chain if that is longer than blockchain
-func replaceChain(newBlocks []Block) {
-	if len(newBlocks) > len(Blockchain) {
-		Blockchain = newBlocks
-	}
+	mutex.Lock()
+	tempBlocks = []Block{}
+	mutex.Unlock()
 }
