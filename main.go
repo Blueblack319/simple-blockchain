@@ -66,7 +66,7 @@ func main() {
 
 	defer server.Close()
 
-	fmt.Println("Listening on : 165.22.240.8:9000")
+	fmt.Println("Listening on : 165.22.240.8:9000gpg ")
 	go func() {
 		for candidate := range candidatedBlocks {
 			mutex.Lock()
